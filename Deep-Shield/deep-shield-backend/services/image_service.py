@@ -110,37 +110,73 @@ def analyze_image(file_bytes: bytes) -> Dict[str, Any]:
     arr = np.array(face_crop, dtype=np.uint8)
     gray = arr.mean(axis=2)
 
-    # Feature 1: Texture variance (high for real, low for AI)
+def analyze_image(file_bytes: bytes) -> Dict[str, Any]:
+    """
+    Detect AI-generated faces using multiple complementary features:
+    1. Texture variance (Laplacian) - AI faces are too smooth
+    2. Frequency analysis - AI has reduced high-frequency
+    3. Color gradient smoothness - AI has too uniform gradients
+    
+    Real faces have natural texture, color variation, and detail.
+    AI faces are overly smooth and artificially perfect.
+    """
+    try:
+        image = Image.open(BytesIO(file_bytes)).convert("RGB")
+    except Exception as exc:
+        raise ValueError("Invalid or corrupted image file.") from exc
+
+    face_crop = crop_largest_face(image)
+    if face_crop is None:
+        return {"error": NO_FACE_MESSAGE}
+
+    arr = np.array(face_crop, dtype=np.uint8)
+    gray = arr.mean(axis=2)
+
+    # Feature 1: Texture variance (Laplacian)
+    # Real faces: lap_var typically 80-400+ (natural skin texture)
+    # AI faces: lap_var typically 20-80 (too smooth, plastic-looking)
     lap_var = _laplacian_variance(gray)
-    # Real faces typically have lap_var 100-600+
-    # AI faces often have lap_var 10-80 (too smooth)
-    # Stricter: require lap_var > 80 for decent score
-    texture_score = min(1.0, max(0.0, (lap_var - 50.0) / 120.0))
+    
+    # Normalize: higher texture = more real
+    # Range: assume lap_var between 10 and 300 for meaningful spread
+    texture_indicator = min(1.0, max(0.0, (lap_var - 25.0) / 200.0))
     
     # Feature 2: Frequency analysis
     low_ratio, mid_ratio, high_ratio = _fft_analysis(gray)
     
-    # Real faces should have high-frequency content (0.20-0.40)
-    # AI faces typically have very low high-frequency (<0.12)
-    # Much stricter: penalize anything below 0.18
-    high_freq_score = min(1.0, max(0.0, (high_ratio - 0.12) / 0.20))
+    # Real faces: good distribution across frequencies, particularly high-freq (0.20-0.40)
+    # AI faces: dominated by low/mid freq, very little high-freq (<0.12)
+    # Look for balanced distribution
+    balance_indicator = 1.0 - abs(low_ratio - 0.35)  # Ideal is around 0.35
     
-    # Mid-frequency being very high (>0.45) is suspicious of AI over-smoothing
-    mid_freq_penalty = max(0.0, min(1.0, (mid_ratio - 0.40) / 0.15))
+    # High-frequency is a good indicator of real detail
+    high_freq_indicator = min(1.0, max(0.0, (high_ratio - 0.10) / 0.25))
     
-    # Low frequency being dominant (>0.55) suggests lack of detail (AI)
-    low_freq_penalty = max(0.0, min(1.0, (low_ratio - 0.50) / 0.15))
+    # Feature 3: Local contrast (variation in small patches)
+    # AI faces have uniform skin, real faces have texture variation
+    # Compute gradient magnitude
+    gy, gx = np.gradient(gray.astype(float))
+    gradient_mag = np.sqrt(gx**2 + gy**2)
+    gradient_variance = np.var(gradient_mag)
     
-    # Final scoring: real faces need BOTH good texture AND high-frequency
-    # Much stricter weighting
-    real_score = 0.6 * texture_score + 0.4 * high_freq_score
+    # Normalize gradient variance
+    gradient_indicator = min(1.0, max(0.0, (gradient_variance - 5.0) / 50.0))
     
-    # Apply AI penalties more aggressively
-    ai_indicators = max(mid_freq_penalty, low_freq_penalty)
+    # Combine indicators
+    # Weight: texture (40%), frequency balance (30%), gradient (20%), high-freq (10%)
+    real_score = (
+        0.40 * texture_indicator +
+        0.20 * balance_indicator +
+        0.25 * gradient_indicator +
+        0.15 * high_freq_indicator
+    )
     
-    fake_probability = (1.0 - real_score) * (1.0 + ai_indicators * 2.0)
-    fake_probability = max(0.0, min(1.0, fake_probability))
-    real_probability = 1.0 - fake_probability
+    # Clamp to [0, 1]
+    real_score = max(0.0, min(1.0, real_score))
+    
+    # Convert to probabilities
+    real_probability = real_score
+    fake_probability = 1.0 - real_score
 
     confidence = _confidence_level(real_probability, fake_probability)
 
