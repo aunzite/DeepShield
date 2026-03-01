@@ -1,0 +1,6 @@
+fastapi
+uvicorn
+mediapipe
+pillow
+numpy
+python-multipart

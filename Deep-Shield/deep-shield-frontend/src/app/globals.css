@@ -1,0 +1,174 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html {
+  scroll-behavior: smooth;
+}
+
+html,
+body {
+  @apply h-full;
+}
+
+body {
+  height: 100%;
+  min-height: 100%;
+  color: #2d2a26;
+  font-family: var(--font-dm-sans), system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  position: relative;
+}
+
+/* Base: warm cream + strong radial color blobs (teal, coral, lavender) */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  background-color: #f8f5f0;
+  background-image:
+    radial-gradient(ellipse 100% 80% at 20% 0%, rgba(13, 148, 136, 0.28), transparent 50%),
+    radial-gradient(ellipse 100% 80% at 80% 100%, rgba(224, 124, 94, 0.25), transparent 50%),
+    radial-gradient(ellipse 80% 60% at 50% 50%, rgba(167, 139, 250, 0.18), transparent 55%),
+    radial-gradient(ellipse 70% 50% at 0% 60%, rgba(251, 191, 36, 0.12), transparent 45%);
+  pointer-events: none;
+}
+
+/* Big blurred gradient orbs – teal, coral, lavender */
+body::after {
+  content: "";
+  position: fixed;
+  inset: -25%;
+  z-index: -1;
+  background:
+    radial-gradient(ellipse 50% 50% at 10% 20%, rgba(13, 148, 136, 0.55), transparent 45%),
+    radial-gradient(ellipse 50% 50% at 90% 80%, rgba(224, 124, 94, 0.5), transparent 45%),
+    radial-gradient(ellipse 40% 40% at 50% 50%, rgba(167, 139, 250, 0.4), transparent 50%),
+    linear-gradient(160deg, rgba(13, 148, 136, 0.25) 0%, transparent 35%, transparent 65%, rgba(224, 124, 94, 0.22) 100%);
+  filter: blur(70px);
+  pointer-events: none;
+}
+
+* {
+  border-color: #e8e4df;
+}
+
+@layer components {
+  .ds-card {
+    background: linear-gradient(145deg, rgba(255, 255, 255, 0.95) 0%, rgba(255, 252, 248, 0.98) 100%);
+    border: 1px solid rgba(232, 228, 223, 0.9);
+    border-radius: 1.5rem;
+    box-shadow: 0 2px 8px rgba(45, 42, 38, 0.06), 0 8px 24px -4px rgba(13, 148, 136, 0.08), 0 0 0 1px rgba(255, 255, 255, 0.5) inset;
+    transition: box-shadow 0.3s, transform 0.2s;
+  }
+  .ds-card:hover {
+    box-shadow: 0 8px 24px rgba(45, 42, 38, 0.08), 0 16px 40px -6px rgba(13, 148, 136, 0.12), 0 0 0 1px rgba(255, 255, 255, 0.6) inset;
+  }
+  .ds-btn-primary {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 9999px;
+    background: linear-gradient(135deg, #0d9488 0%, #0f766e 50%, #0d9488 100%);
+    background-size: 200% 200%;
+    padding: 0.625rem 1.25rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: white;
+    box-shadow: 0 4px 14px -2px rgba(13, 148, 136, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.2) inset;
+    transition: transform 0.2s, box-shadow 0.2s, background-position 0.4s;
+  }
+  .ds-btn-primary:hover {
+    transform: scale(1.03);
+    box-shadow: 0 6px 20px -2px rgba(13, 148, 136, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.25) inset;
+    background-position: 100% 50%;
+  }
+  .ds-btn-primary:active {
+    transform: scale(0.98);
+  }
+  .ds-btn-primary:focus-visible {
+    outline: 2px solid #0d9488;
+    outline-offset: 2px;
+  }
+  .ds-tab {
+    flex: 1;
+    cursor: pointer;
+    border-radius: 1rem;
+    padding: 0.5rem 1rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    transition: all 0.2s;
+  }
+  .ds-tab-active {
+    background: linear-gradient(145deg, rgba(255, 255, 255, 0.98) 0%, rgba(240, 253, 250, 0.95) 100%);
+    color: #0f766e;
+    font-weight: 600;
+    box-shadow: 0 2px 8px rgba(13, 148, 136, 0.12), 0 0 0 1px rgba(13, 148, 136, 0.15);
+  }
+  .ds-tab-inactive {
+    color: #6b6560;
+  }
+  .ds-tab-inactive:hover {
+    color: #2d2a26;
+    background-color: rgba(245, 242, 237, 0.8);
+  }
+  .ds-file-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    border-radius: 9999px;
+    padding: 0.5rem 1.25rem;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: white;
+    background: linear-gradient(135deg, #0d9488 0%, #0f766e 50%, #0d9488 100%);
+    background-size: 200% 200%;
+    box-shadow: 0 2px 8px -2px rgba(13, 148, 136, 0.4);
+    transition: transform 0.2s, box-shadow 0.2s, background-position 0.4s;
+    cursor: pointer;
+  }
+  .ds-file-btn:hover {
+    transform: scale(1.03);
+    box-shadow: 0 4px 14px -2px rgba(13, 148, 136, 0.45);
+    background-position: 100% 50%;
+  }
+  .ds-file-btn:active {
+    transform: scale(0.98);
+  }
+}
+
+.ds-badge {
+  @apply inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold;
+}
+
+.ds-badge-low {
+  @apply bg-emerald-100 text-emerald-800 border border-emerald-200;
+}
+
+.ds-badge-medium {
+  @apply bg-amber-100 text-amber-800 border border-amber-200;
+}
+
+.ds-badge-high {
+  @apply bg-rose-100 text-rose-800 border border-rose-200;
+}
+
+@keyframes ds-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+.ds-progress-indeterminate {
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(13, 148, 136, 0.35) 40%,
+    rgb(13, 148, 136) 50%,
+    rgba(13, 148, 136, 0.35) 60%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: ds-shimmer 1.6s ease-in-out infinite;
+}
