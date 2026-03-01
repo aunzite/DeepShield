@@ -9,6 +9,7 @@ No HuggingFace. No torch. No model downloads. No blocking the event loop.
 
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional
 
@@ -52,8 +53,9 @@ class HeadlineRequest(BaseModel):
 
 
 class ImageAnalysisResponse(BaseModel):
-    real_probability: Optional[float] = Field(None, ge=0.0, le=1.0)
+    synthetic_probability: Optional[float] = Field(None, ge=0.0, le=1.0)
     fake_probability: Optional[float] = Field(None, ge=0.0, le=1.0)
+    real_probability: Optional[float] = Field(None, ge=0.0, le=1.0)
     confidence_level: Optional[str] = None
     explanation: Optional[str] = None
     error: Optional[str] = None
@@ -76,7 +78,12 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
+cors_origins_env = os.getenv("CORS_ORIGINS", "")
+if cors_origins_env.strip():
+    origins = [origin.strip() for origin in cors_origins_env.split(",") if origin.strip()]
+else:
+    origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -114,15 +121,6 @@ async def analyze_image_endpoint(file: UploadFile = File(...)) -> JSONResponse:
         logger.exception("Image analysis failed")
         raise HTTPException(status_code=500, detail="Analysis failed.") from exc
 
-    # Add explanation text if analysis succeeded
-    if "error" not in result:
-        result["explanation"] = (
-            "This score is based on visual texture smoothness, entropy distribution, "
-            "and structural sharpness patterns often associated with synthetic imagery. "
-            "This tool provides probabilistic authenticity signals and is not a "
-            "forensic deepfake detector."
-        )
-
     return JSONResponse(content=result)
 
 
@@ -148,4 +146,5 @@ async def analyze_headline_endpoint(payload: HeadlineRequest) -> JSONResponse:
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8001, reload=False)
+    port = int(os.getenv("PORT", "8001"))
+    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)

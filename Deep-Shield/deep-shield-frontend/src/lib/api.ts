@@ -1,5 +1,7 @@
 export const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8001";
+  process.env.NEXT_PUBLIC_API_BASE_URL ??
+  process.env.NEXT_PUBLIC_API_URL ??
+  "http://localhost:8001";
 
 export function downloadReport(data: object, filename: string): void {
   const blob = new Blob([JSON.stringify(data, null, 2)], {
