@@ -1,7 +1,7 @@
 """
 DeepShield Backend: hackathon MVP — fast, stable, no heavy ML.
 
-POST /analyze-image: MediaPipe face detection + heuristic scoring (blur, edge, entropy).
+POST /analyze-image: OpenCV Haar Cascade face detection + heuristic scoring (blur, edge, entropy).
 POST /analyze-headline: Rule-based manipulation scoring (keywords, caps, punctuation).
 
 No HuggingFace. No torch. No model downloads. No blocking the event loop.
@@ -27,10 +27,10 @@ REQUEST_TIMEOUT = 5
 
 
 def _preload_face_detector() -> None:
-    """Load MediaPipe face detector once at startup. Lightweight, no downloads."""
+    """Load OpenCV face detector once at startup. Lightweight, no downloads."""
     import sys
     try:
-        print("DeepShield: Loading face detector (MediaPipe)...", flush=True)
+        print("DeepShield: Loading face detector (OpenCV Haar Cascade)...", flush=True)
         from services.face_detection import _detector
         _detector()
         print("DeepShield: Face detector ready.", flush=True)
@@ -41,7 +41,7 @@ def _preload_face_detector() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Preload only MediaPipe (fast). Run in executor to avoid blocking."""
+    """Preload only OpenCV face detector (fast). Run in executor to avoid blocking."""
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(None, _preload_face_detector)
     yield
