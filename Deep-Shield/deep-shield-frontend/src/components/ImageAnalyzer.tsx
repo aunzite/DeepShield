@@ -146,7 +146,6 @@ export function ImageAnalyzer() {
 
   const chartOptions = {
     responsive: true,
-    animation: true as const,
     plugins: {
       legend: {
         position: "top" as const,
