@@ -6,6 +6,7 @@ import { motion } from "framer-motion";
 import { Bar } from "react-chartjs-2";
 import {
   Chart as ChartJS,
+  ChartOptions,
   CategoryScale,
   LinearScale,
   BarElement,
@@ -144,8 +145,11 @@ export function ImageAnalyzer() {
     ],
   };
 
-  const chartOptions = {
+  const chartOptions: ChartOptions<"bar"> = {
     responsive: true,
+    animation: {
+      duration: 800,
+    },
     plugins: {
       legend: {
         position: "top" as const,
