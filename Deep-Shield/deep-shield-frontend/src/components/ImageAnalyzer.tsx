@@ -260,7 +260,7 @@ export function ImageAnalyzer() {
           >
             {loading ? "Analyzing..." : "Analyze Image"}
           </motion.button>
-          {result && (
+          {result && result.confidence_level && (
             <motion.div
               initial={{ opacity: 0, scale: 0.9 }}
               animate={{ opacity: 1, scale: 1 }}
