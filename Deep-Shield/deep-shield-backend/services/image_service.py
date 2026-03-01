@@ -67,8 +67,15 @@ def analyze_image(file_bytes: bytes) -> Dict[str, Any]:
     """
     Run lightweight pipeline: face detection -> heuristics -> fake probability.
 
-    No model loading, no downloads. Returns real_probability, fake_probability,
-    confidence_level, or error if no face.
+    AI-generated faces tend to be:
+    - Overly smooth (low texture/detail in skin)
+    - Unnaturally symmetric
+    - Consistent/perfect lighting and color
+    
+    Real faces tend to have:
+    - Natural texture variation in skin
+    - Subtle asymmetries
+    - Natural lighting inconsistencies
     """
     try:
         image = Image.open(BytesIO(file_bytes)).convert("RGB")
@@ -86,15 +93,24 @@ def analyze_image(file_bytes: bytes) -> Dict[str, Any]:
     edge_den = _edge_density(gray)
     entropy = _color_entropy(arr)
 
-    # Normalize blur: low Laplacian variance -> more blur -> higher fake score
-    # Typical sharp face: lap_var in hundreds to thousands; blur: low tens
-    blur_score = 1.0 - min(1.0, lap_var / 800.0)
-    # Low edge density -> smoother/faker looking
-    edge_score = 1.0 - min(1.0, edge_den * 4.0)
-    # Entropy: very low or very high can look "off"; center around 0.5
-    entropy_score = 0.5 + 0.3 * (entropy - 0.5)
+    # AI faces are TOO SMOOTH (high Laplacian variance suggests texture/detail)
+    # Real faces: lap_var typically 100-500+ (natural skin texture)
+    # AI faces: lap_var typically much lower (over-smoothed skin)
+    # Score: high lap_var = more real features present = LOWER fake score
+    smoothness_score = 1.0 - min(1.0, lap_var / 300.0)  # Inverted: smoothness = fake
+    
+    # AI faces have very consistent edges (over-processed)
+    # Real faces have varied, natural edge distribution
+    # High edge density = more natural texture = LOWER fake score
+    edge_consistency_score = 1.0 - min(1.0, edge_den * 3.0)
+    
+    # Entropy: AI images often have unnaturally uniform color distributions
+    # Real skin has natural color variation (redness, blemishes, freckles, etc.)
+    # Low entropy (too uniform) suggests AI generation
+    entropy_score = 1.0 - min(1.0, entropy * 1.5)  # Low entropy = more artificial
 
-    fake_prob = 0.4 * blur_score + 0.35 * edge_score + 0.25 * max(0, min(1, entropy_score))
+    # Weighted combination: smoothness is strongest indicator
+    fake_prob = 0.5 * smoothness_score + 0.3 * edge_consistency_score + 0.2 * entropy_score
     fake_prob = max(0.0, min(1.0, fake_prob))
     real_prob = 1.0 - fake_prob
 
