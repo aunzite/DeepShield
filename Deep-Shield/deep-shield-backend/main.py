@@ -55,6 +55,7 @@ class ImageAnalysisResponse(BaseModel):
     real_probability: Optional[float] = Field(None, ge=0.0, le=1.0)
     fake_probability: Optional[float] = Field(None, ge=0.0, le=1.0)
     confidence_level: Optional[str] = None
+    explanation: Optional[str] = None
     error: Optional[str] = None
 
 
@@ -112,6 +113,15 @@ async def analyze_image_endpoint(file: UploadFile = File(...)) -> JSONResponse:
     except Exception as exc:
         logger.exception("Image analysis failed")
         raise HTTPException(status_code=500, detail="Analysis failed.") from exc
+
+    # Add explanation text if analysis succeeded
+    if "error" not in result:
+        result["explanation"] = (
+            "This score is based on visual texture smoothness, entropy distribution, "
+            "and structural sharpness patterns often associated with synthetic imagery. "
+            "This tool provides probabilistic authenticity signals and is not a "
+            "forensic deepfake detector."
+        )
 
     return JSONResponse(content=result)
 

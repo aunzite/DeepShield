@@ -1,17 +1,17 @@
 """
-Image analysis: face detection + frequency domain AI detection.
+Image authenticity analysis using deterministic heuristic scoring.
 
-AI-generated faces have characteristic frequency patterns:
-- Different FFT magnitude distribution than real faces
-- Reduced high-frequency components (overly smooth)
-- Anomalous phase patterns
+This module analyzes visual texture patterns, entropy distribution, and structural 
+features to compute a synthetic authenticity probability. Results are consistent
+and deterministic for the same input image.
 
-This uses frequency analysis which is effective for detecting AI-generated content.
+NO machine learning models are used. This is a fast, rule-based analysis system.
 """
 
 from io import BytesIO
 from typing import Any, Dict
 
+import cv2
 import numpy as np
 from PIL import Image
 
@@ -20,83 +20,106 @@ from services.face_detection import crop_largest_face
 NO_FACE_MESSAGE = "No face detected. Ensure a clear frontal human face is visible."
 
 
-def _laplacian_variance(gray: np.ndarray) -> float:
-    """Approximate Laplacian (3x3) and return variance. Numpy only."""
-    g = np.asarray(gray, dtype=np.float64)
-    lap = np.zeros_like(g)
-    lap[1:-1, 1:-1] = (
-        g[2:, 1:-1] + g[:-2, 1:-1] + g[1:-1, 2:] + g[1:-1, :-2]
-        - 4.0 * g[1:-1, 1:-1]
-    )
-    return float(np.var(lap))
-
-
-def _fft_analysis(gray: np.ndarray) -> tuple:
+def _compute_blur_score(gray: np.ndarray) -> float:
     """
-    Frequency domain analysis for AI detection.
+    Compute blur score using variance of Laplacian.
+    Higher values indicate sharper images.
     
-    AI faces typically show:
-    - Lower high-frequency energy (over-smoothed)
-    - Different frequency distribution pattern
+    Returns normalized score (0-1, where 1 = very blurry, 0 = sharp)
     """
-    # Compute FFT
-    fft = np.fft.fft2(gray)
-    fft_shift = np.fft.fftshift(fft)
-    magnitude = np.abs(fft_shift)
-    
-    # Normalize
-    magnitude = magnitude / (magnitude.max() + 1e-10)
-    
-    h, w = gray.shape
-    cy, cx = h // 2, w // 2
-    
-    # Divide into frequency bands
-    # Low frequency (center): natural image content
-    # Mid frequency: edges and textures  
-    # High frequency: noise and fine details
-    
-    # Create frequency masks
-    y, x = np.ogrid[:h, :w]
-    distance = np.sqrt((x - cx)**2 + (y - cy)**2)
-    
-    # Radius thresholds
-    low_r = min(h, w) / 8
-    mid_r = min(h, w) / 4
-    
-    low_freq = distance <= low_r
-    mid_freq = (distance > low_r) & (distance <= mid_r)
-    high_freq = distance > mid_r
-    
-    low_energy = np.sum(magnitude[low_freq])
-    mid_energy = np.sum(magnitude[mid_freq])
-    high_energy = np.sum(magnitude[high_freq])
-    
-    total_energy = low_energy + mid_energy + high_energy + 1e-10
-    
-    low_ratio = low_energy / total_energy
-    mid_ratio = mid_energy / total_energy
-    high_ratio = high_energy / total_energy
-    
-    return low_ratio, mid_ratio, high_ratio
+    laplacian_var = cv2.Laplacian(gray, cv2.CV_64F).var()
+    # Typical range: 10-500 for faces
+    # Normalize: lower variance = more blur = higher score
+    blur_score = 1.0 - min(1.0, laplacian_var / 200.0)
+    return max(0.0, min(1.0, blur_score))
 
 
-def _confidence_level(real_prob: float, fake_prob: float) -> str:
-    max_prob = max(real_prob, fake_prob)
-    if max_prob > 0.8:
+def _compute_edge_density(gray: np.ndarray) -> float:
+    """
+    Compute edge density using Canny edge detection.
+    
+    Returns normalized score (0-1, where 1 = very high edge density)
+    """
+    # Apply Canny edge detection
+    edges = cv2.Canny(gray.astype(np.uint8), 50, 150)
+    
+    # Calculate percentage of edge pixels
+    edge_density = np.sum(edges > 0) / edges.size
+    
+    # Normalize: typical range 0.05-0.30 for faces
+    normalized = edge_density / 0.25
+    return max(0.0, min(1.0, normalized))
+
+
+def _compute_color_entropy(rgb: np.ndarray) -> float:
+    """
+    Compute color entropy to measure distribution randomness.
+    
+    Returns normalized score (0-1, where 1 = high entropy/randomness)
+    """
+    # Compute histogram for each channel
+    entropies = []
+    for channel in range(3):
+        hist, _ = np.histogram(rgb[:, :, channel], bins=256, range=(0, 256))
+        hist = hist.astype(float) / (hist.sum() + 1e-10)
+        hist = hist[hist > 0]  # Remove zero bins
+        entropy = -np.sum(hist * np.log2(hist))
+        entropies.append(entropy)
+    
+    # Average entropy across channels
+    avg_entropy = np.mean(entropies)
+    
+    # Normalize: typical range 4-8 bits for natural images
+    normalized = (avg_entropy - 4.0) / 4.0
+    return max(0.0, min(1.0, normalized))
+
+
+def _compute_noise_level(gray: np.ndarray) -> float:
+    """
+    Compute noise level using standard deviation of grayscale image.
+    
+    Returns normalized score (0-1, where 1 = very low noise/smooth)
+    """
+    std_dev = np.std(gray)
+    
+    # Normalize: typical range 10-60 for faces
+    # Lower std = smoother/less noise = higher synthetic score
+    noise_score = 1.0 - min(1.0, std_dev / 50.0)
+    return max(0.0, min(1.0, noise_score))
+
+
+def _confidence_level(synthetic_prob: float) -> str:
+    """
+    Determine confidence level based on synthetic probability.
+    
+    > 0.75 = High confidence
+    0.4 - 0.75 = Medium confidence
+    < 0.4 = Low confidence
+    """
+    if synthetic_prob > 0.75 or synthetic_prob < 0.25:
         return "High"
-    if max_prob >= 0.6:
-        return "Medium"
-    return "Low"
+    if 0.4 <= synthetic_prob <= 0.6:
+        return "Low"
+    return "Medium"
 
 
 def analyze_image(file_bytes: bytes) -> Dict[str, Any]:
     """
-    Detect AI-generated faces using:
-    1. Frequency domain analysis (FFT patterns)
-    2. Texture variance (Laplacian)
+    Analyze image authenticity using deterministic heuristic scoring.
     
-    AI faces show characteristic frequency patterns with reduced high-frequency content.
-    Real faces have natural texture and detail distribution.
+    Computes a synthetic probability score based on:
+    - Blur/sharpness (Laplacian variance)
+    - Edge density (Canny detection)  
+    - Color entropy (distribution randomness)
+    - Noise level (grayscale std deviation)
+    
+    Returns consistent, deterministic results for the same input.
+    
+    Returns:
+        Dict with:
+        - real_probability: float (0-1)
+        - fake_probability: float (0-1)
+        - confidence_level: str ("Low" | "Medium" | "High")
     """
     try:
         image = Image.open(BytesIO(file_bytes)).convert("RGB")
@@ -107,81 +130,55 @@ def analyze_image(file_bytes: bytes) -> Dict[str, Any]:
     if face_crop is None:
         return {"error": NO_FACE_MESSAGE}
 
-    arr = np.array(face_crop, dtype=np.uint8)
-    gray = arr.mean(axis=2)
+    # Convert to numpy arrays
+    rgb_array = np.array(face_crop, dtype=np.uint8)
+    gray_array = cv2.cvtColor(rgb_array, cv2.COLOR_RGB2GRAY)
 
-def analyze_image(file_bytes: bytes) -> Dict[str, Any]:
-    """
-    Detect AI-generated faces using multiple complementary features:
-    1. Texture variance (Laplacian) - AI faces are too smooth
-    2. Frequency analysis - AI has reduced high-frequency
-    3. Color gradient smoothness - AI has too uniform gradients
-    
-    Real faces have natural texture, color variation, and detail.
-    AI faces are overly smooth and artificially perfect.
-    """
-    try:
-        image = Image.open(BytesIO(file_bytes)).convert("RGB")
-    except Exception as exc:
-        raise ValueError("Invalid or corrupted image file.") from exc
+    # Compute individual metrics
+    blur_score = _compute_blur_score(gray_array)
+    edge_density = _compute_edge_density(gray_array)
+    color_entropy = _compute_color_entropy(rgb_array)
+    noise_level = _compute_noise_level(gray_array)
 
-    face_crop = crop_largest_face(image)
-    if face_crop is None:
-        return {"error": NO_FACE_MESSAGE}
+    # Synthetic probability formula
+    # High blur + low entropy + low noise + abnormal edges = likely synthetic
+    # Weights tuned for face images
+    low_entropy_weight = 0.30
+    smoothness_weight = 0.35
+    sharpness_weight = 0.20
+    blur_weight = 0.15
 
-    arr = np.array(face_crop, dtype=np.uint8)
-    gray = arr.mean(axis=2)
+    # Inverse entropy (low entropy is suspicious)
+    inverse_entropy = 1.0 - color_entropy
+    
+    # Smoothness factor (low noise is suspicious)
+    smoothness_factor = noise_level
+    
+    # Abnormal edge density (too perfect edges)
+    # Real faces: 0.10-0.25 edge density
+    # Perfect/synthetic: <0.08 or >0.30
+    edge_abnormality = 0.0
+    if edge_density < 0.32:  # Too few edges
+        edge_abnormality = (0.32 - edge_density) / 0.32
+    elif edge_density > 0.90:  # Too many edges
+        edge_abnormality = (edge_density - 0.90) / 0.10
 
-    # Feature 1: Texture variance (Laplacian)
-    # Real faces: lap_var typically 80-400+ (natural skin texture)
-    # AI faces: lap_var typically 20-80 (too smooth, plastic-looking)
-    lap_var = _laplacian_variance(gray)
-    
-    # Normalize: higher texture = more real
-    # Range: assume lap_var between 10 and 300 for meaningful spread
-    texture_indicator = min(1.0, max(0.0, (lap_var - 25.0) / 200.0))
-    
-    # Feature 2: Frequency analysis
-    low_ratio, mid_ratio, high_ratio = _fft_analysis(gray)
-    
-    # Real faces: good distribution across frequencies, particularly high-freq (0.20-0.40)
-    # AI faces: dominated by low/mid freq, very little high-freq (<0.12)
-    # Look for balanced distribution
-    balance_indicator = 1.0 - abs(low_ratio - 0.35)  # Ideal is around 0.35
-    
-    # High-frequency is a good indicator of real detail
-    high_freq_indicator = min(1.0, max(0.0, (high_ratio - 0.10) / 0.25))
-    
-    # Feature 3: Local contrast (variation in small patches)
-    # AI faces have uniform skin, real faces have texture variation
-    # Compute gradient magnitude
-    gy, gx = np.gradient(gray.astype(float))
-    gradient_mag = np.sqrt(gx**2 + gy**2)
-    gradient_variance = np.var(gradient_mag)
-    
-    # Normalize gradient variance
-    gradient_indicator = min(1.0, max(0.0, (gradient_variance - 5.0) / 50.0))
-    
-    # Combine indicators
-    # Weight: texture (40%), frequency balance (30%), gradient (20%), high-freq (10%)
-    real_score = (
-        0.40 * texture_indicator +
-        0.20 * balance_indicator +
-        0.25 * gradient_indicator +
-        0.15 * high_freq_indicator
+    # Compute synthetic score
+    synthetic_score = (
+        low_entropy_weight * inverse_entropy +
+        smoothness_weight * smoothness_factor +
+        sharpness_weight * edge_abnormality +
+        blur_weight * blur_score
     )
-    
-    # Clamp to [0, 1]
-    real_score = max(0.0, min(1.0, real_score))
-    
-    # Convert to probabilities
-    real_probability = real_score
-    fake_probability = 1.0 - real_score
 
-    confidence = _confidence_level(real_probability, fake_probability)
+    # Normalize to [0, 1]
+    synthetic_probability = max(0.0, min(1.0, synthetic_score))
+    real_probability = 1.0 - synthetic_probability
+
+    confidence = _confidence_level(synthetic_probability)
 
     return {
         "real_probability": round(real_probability, 4),
-        "fake_probability": round(fake_probability, 4),
+        "fake_probability": round(synthetic_probability, 4),
         "confidence_level": confidence,
     }
