@@ -112,28 +112,33 @@ def analyze_image(file_bytes: bytes) -> Dict[str, Any]:
 
     # Feature 1: Texture variance (high for real, low for AI)
     lap_var = _laplacian_variance(gray)
-    # Real faces typically have lap_var 50-600+
-    # AI faces often have lap_var 10-100 (too smooth)
-    texture_score = min(1.0, max(0.0, (lap_var - 20.0) / 150.0))
+    # Real faces typically have lap_var 100-600+
+    # AI faces often have lap_var 10-80 (too smooth)
+    # Stricter: require lap_var > 80 for decent score
+    texture_score = min(1.0, max(0.0, (lap_var - 50.0) / 120.0))
     
     # Feature 2: Frequency analysis
     low_ratio, mid_ratio, high_ratio = _fft_analysis(gray)
     
-    # AI faces have too much low/mid frequency and very low high frequency
-    # Real faces have more balanced distribution with decent high-frequency content
-    # High frequency ratio should be 0.15-0.35 for real faces
-    # AI faces often have <0.1
+    # Real faces should have high-frequency content (0.20-0.40)
+    # AI faces typically have very low high-frequency (<0.12)
+    # Much stricter: penalize anything below 0.18
+    high_freq_score = min(1.0, max(0.0, (high_ratio - 0.12) / 0.20))
     
-    high_freq_score = min(1.0, max(0.0, high_ratio * 8.0))  # Boost high freq importance
+    # Mid-frequency being very high (>0.45) is suspicious of AI over-smoothing
+    mid_freq_penalty = max(0.0, min(1.0, (mid_ratio - 0.40) / 0.15))
     
-    # Mid-frequency being too high suggests AI smoothing
-    mid_freq_penalty = min(1.0, max(0.0, (mid_ratio - 0.3)))
+    # Low frequency being dominant (>0.55) suggests lack of detail (AI)
+    low_freq_penalty = max(0.0, min(1.0, (low_ratio - 0.50) / 0.15))
     
-    # Final scoring: texture and high-frequency presence indicate real faces
-    real_score = 0.5 * texture_score + 0.5 * high_freq_score
+    # Final scoring: real faces need BOTH good texture AND high-frequency
+    # Much stricter weighting
+    real_score = 0.6 * texture_score + 0.4 * high_freq_score
     
-    # Penalty for suspicious frequency distribution
-    fake_probability = (1.0 - real_score) * (1.0 + mid_freq_penalty * 0.3)
+    # Apply AI penalties more aggressively
+    ai_indicators = max(mid_freq_penalty, low_freq_penalty)
+    
+    fake_probability = (1.0 - real_score) * (1.0 + ai_indicators * 2.0)
     fake_probability = max(0.0, min(1.0, fake_probability))
     real_probability = 1.0 - fake_probability
 
