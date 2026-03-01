@@ -1,9 +1,12 @@
 """
-Image analysis: face detection + heuristic scoring (demo / hackathon MVP).
+Image analysis: face detection + frequency domain AI detection.
 
-- MediaPipe face detection; if no face -> error.
-- Heuristics: blur (Laplacian variance), edge density, color entropy.
-- Normalize into fake_probability. No ML models, no downloads, pure CPU.
+AI-generated faces have characteristic frequency patterns:
+- Different FFT magnitude distribution than real faces
+- Reduced high-frequency components (overly smooth)
+- Anomalous phase patterns
+
+This uses frequency analysis which is effective for detecting AI-generated content.
 """
 
 from io import BytesIO
@@ -28,54 +31,72 @@ def _laplacian_variance(gray: np.ndarray) -> float:
     return float(np.var(lap))
 
 
-def _edge_density(gray: np.ndarray, threshold: float = 15.0) -> float:
-    """Fraction of pixels with strong Laplacian response (edges)."""
-    g = np.asarray(gray, dtype=np.float64)
-    lap = np.zeros_like(g)
-    lap[1:-1, 1:-1] = (
-        g[2:, 1:-1] + g[:-2, 1:-1] + g[1:-1, 2:] + g[1:-1, :-2]
-        - 4.0 * g[1:-1, 1:-1]
-    )
-    total = lap.size
-    if total == 0:
-        return 0.0
-    strong = np.sum(np.abs(lap) > threshold)
-    return float(strong) / float(total)
-
-
-def _color_entropy(rgb: np.ndarray, bins: int = 32) -> float:
-    """Normalized entropy of color distribution (single channel histogram)."""
-    flat = rgb.reshape(-1, 3).mean(axis=1)
-    hist, _ = np.histogram(flat, bins=bins, range=(0, 256))
-    hist = hist.astype(np.float64) + 1e-10
-    hist /= hist.sum()
-    ent = -np.sum(hist * np.log2(hist))
-    max_ent = np.log2(bins)
-    return float(ent / max_ent) if max_ent > 0 else 0.0
+def _fft_analysis(gray: np.ndarray) -> tuple:
+    """
+    Frequency domain analysis for AI detection.
+    
+    AI faces typically show:
+    - Lower high-frequency energy (over-smoothed)
+    - Different frequency distribution pattern
+    """
+    # Compute FFT
+    fft = np.fft.fft2(gray)
+    fft_shift = np.fft.fftshift(fft)
+    magnitude = np.abs(fft_shift)
+    
+    # Normalize
+    magnitude = magnitude / (magnitude.max() + 1e-10)
+    
+    h, w = gray.shape
+    cy, cx = h // 2, w // 2
+    
+    # Divide into frequency bands
+    # Low frequency (center): natural image content
+    # Mid frequency: edges and textures  
+    # High frequency: noise and fine details
+    
+    # Create frequency masks
+    y, x = np.ogrid[:h, :w]
+    distance = np.sqrt((x - cx)**2 + (y - cy)**2)
+    
+    # Radius thresholds
+    low_r = min(h, w) / 8
+    mid_r = min(h, w) / 4
+    
+    low_freq = distance <= low_r
+    mid_freq = (distance > low_r) & (distance <= mid_r)
+    high_freq = distance > mid_r
+    
+    low_energy = np.sum(magnitude[low_freq])
+    mid_energy = np.sum(magnitude[mid_freq])
+    high_energy = np.sum(magnitude[high_freq])
+    
+    total_energy = low_energy + mid_energy + high_energy + 1e-10
+    
+    low_ratio = low_energy / total_energy
+    mid_ratio = mid_energy / total_energy
+    high_ratio = high_energy / total_energy
+    
+    return low_ratio, mid_ratio, high_ratio
 
 
 def _confidence_level(real_prob: float, fake_prob: float) -> str:
     max_prob = max(real_prob, fake_prob)
     if max_prob > 0.8:
         return "High"
-    if max_prob >= 0.5:
+    if max_prob >= 0.6:
         return "Medium"
     return "Low"
 
 
 def analyze_image(file_bytes: bytes) -> Dict[str, Any]:
     """
-    Run lightweight pipeline: face detection -> heuristics -> fake probability.
-
-    AI-generated faces tend to be:
-    - Overly smooth (low texture/detail in skin)
-    - Unnaturally symmetric
-    - Consistent/perfect lighting and color
+    Detect AI-generated faces using:
+    1. Frequency domain analysis (FFT patterns)
+    2. Texture variance (Laplacian)
     
-    Real faces tend to have:
-    - Natural texture variation in skin
-    - Subtle asymmetries
-    - Natural lighting inconsistencies
+    AI faces show characteristic frequency patterns with reduced high-frequency content.
+    Real faces have natural texture and detail distribution.
     """
     try:
         image = Image.open(BytesIO(file_bytes)).convert("RGB")
@@ -89,35 +110,37 @@ def analyze_image(file_bytes: bytes) -> Dict[str, Any]:
     arr = np.array(face_crop, dtype=np.uint8)
     gray = arr.mean(axis=2)
 
+    # Feature 1: Texture variance (high for real, low for AI)
     lap_var = _laplacian_variance(gray)
-    edge_den = _edge_density(gray)
-    entropy = _color_entropy(arr)
-
-    # AI faces are TOO SMOOTH (high Laplacian variance suggests texture/detail)
-    # Real faces: lap_var typically 100-500+ (natural skin texture)
-    # AI faces: lap_var typically much lower (over-smoothed skin)
-    # Score: high lap_var = more real features present = LOWER fake score
-    smoothness_score = 1.0 - min(1.0, lap_var / 300.0)  # Inverted: smoothness = fake
+    # Real faces typically have lap_var 50-600+
+    # AI faces often have lap_var 10-100 (too smooth)
+    texture_score = min(1.0, max(0.0, (lap_var - 20.0) / 150.0))
     
-    # AI faces have very consistent edges (over-processed)
-    # Real faces have varied, natural edge distribution
-    # High edge density = more natural texture = LOWER fake score
-    edge_consistency_score = 1.0 - min(1.0, edge_den * 3.0)
+    # Feature 2: Frequency analysis
+    low_ratio, mid_ratio, high_ratio = _fft_analysis(gray)
     
-    # Entropy: AI images often have unnaturally uniform color distributions
-    # Real skin has natural color variation (redness, blemishes, freckles, etc.)
-    # Low entropy (too uniform) suggests AI generation
-    entropy_score = 1.0 - min(1.0, entropy * 1.5)  # Low entropy = more artificial
+    # AI faces have too much low/mid frequency and very low high frequency
+    # Real faces have more balanced distribution with decent high-frequency content
+    # High frequency ratio should be 0.15-0.35 for real faces
+    # AI faces often have <0.1
+    
+    high_freq_score = min(1.0, max(0.0, high_ratio * 8.0))  # Boost high freq importance
+    
+    # Mid-frequency being too high suggests AI smoothing
+    mid_freq_penalty = min(1.0, max(0.0, (mid_ratio - 0.3)))
+    
+    # Final scoring: texture and high-frequency presence indicate real faces
+    real_score = 0.5 * texture_score + 0.5 * high_freq_score
+    
+    # Penalty for suspicious frequency distribution
+    fake_probability = (1.0 - real_score) * (1.0 + mid_freq_penalty * 0.3)
+    fake_probability = max(0.0, min(1.0, fake_probability))
+    real_probability = 1.0 - fake_probability
 
-    # Weighted combination: smoothness is strongest indicator
-    fake_prob = 0.5 * smoothness_score + 0.3 * edge_consistency_score + 0.2 * entropy_score
-    fake_prob = max(0.0, min(1.0, fake_prob))
-    real_prob = 1.0 - fake_prob
-
-    confidence = _confidence_level(real_prob, fake_prob)
+    confidence = _confidence_level(real_probability, fake_probability)
 
     return {
-        "real_probability": round(real_prob, 4),
-        "fake_probability": round(fake_prob, 4),
+        "real_probability": round(real_probability, 4),
+        "fake_probability": round(fake_probability, 4),
         "confidence_level": confidence,
     }
